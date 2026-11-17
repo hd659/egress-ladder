@@ -1,0 +1,58 @@
+{
+  "nodes": [
+    {
+      "id": "local-net", "label": "本机直连",
+      "probe": {"type": "tcp", "host": "example.com", "port": 443},
+      "timeout_s": 3,
+      "sample": {"cold": {"state": "up", "p": 1, "ok_ms": 30},
+                 "warm": {"state": "up", "p": 1, "ok_ms": 30}}
+    },
+    {
+      "id": "sg-ssh", "label": "新加坡SSH隧道:18080",
+      "needs": ["local-net"],
+      "probe": {"type": "socks5", "host": "127.0.0.1", "port": 18080, "target": "example.com:443"},
+      "timeout_s": 8,
+      "start": "ssh -N -D 18080 vps-sg（主机名换成你 ~/.ssh/config 里的别名）",
+      "sample": {"cold": {"state": "down", "error": "timeout", "p": 0, "fail_ms": 8000},
+                 "warm": {"state": "down", "error": "timeout", "p": 0, "fail_ms": 8000}}
+    },
+    {
+      "id": "misty-client", "label": "Misty:1084",
+      "needs": ["misty-login"],
+      "probe": {"type": "socks5", "host": "127.0.0.1", "port": 1084, "target": "example.com:443"},
+      "timeout_s": 5,
+      "start": "打开 Misty 客户端并连接",
+      "manual": "导入离线可用的旧节点配置，让客户端不登录也能先连上",
+      "sample": {"cold": {"state": "down", "error": "refused", "p": 0, "fail_ms": 2},
+                 "warm": {"state": "up", "p": 1, "ok_ms": 180}}
+    },
+    {
+      "id": "misty-login", "label": "Misty登录",
+      "needs": ["local-net", ["misty-client", "sg-ssh", "ts-exit"]],
+      "start": "在 Misty 里重新登录",
+      "manual": "开手机热点或借任意一条能用的代理，登录一次"
+    },
+    {
+      "id": "tailscale", "label": "Tailscale",
+      "needs": ["local-net"],
+      "probe": {"type": "cmd", "argv": ["tailscale", "status"]},
+      "timeout_s": 3,
+      "start": "打开 Tailscale",
+      "sample": {"cold": {"state": "up", "p": 1, "ok_ms": 40},
+                 "warm": {"state": "up", "p": 1, "ok_ms": 40}}
+    },
+    {
+      "id": "ts-exit", "label": "家宽出口(Tailscale)",
+      "needs": ["tailscale"],
+      "probe": {"type": "cmd", "argv": ["tailscale", "ping", "-c", "1", "homenode"]},
+      "timeout_s": 5, "slow_ms": 400,
+      "slow_hint": "大概率走了 DERP 中继，没打通直连",
+      "start": "tailscale set --exit-node=homenode",
+      "sample": {"cold": {"state": "down", "error": "timeout", "p": 0, "fail_ms": 5000},
+                 "warm": {"state": "up", "p": 0.7, "ok_ms": 1300, "fail_ms": 5000}}
+    }
+  ],
+  "fallbacks": {
+    "隔离浏览器桥接": ["sg-ssh", "misty-client", "ts-exit"]
+  }
+}
